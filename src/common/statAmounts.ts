@@ -14,6 +14,38 @@ export const MAX_AMOUNT = 9999;
  */
 export const CONFIRM_AMOUNT = 100;
 
+export type BulkStatName = 'str' | 'agi' | 'vit' | 'ene' | 'cmd';
+
+export type BulkStatCommand = {
+  stat: BulkStatName;
+  amount: number;
+};
+
+/**
+ * Parses only the exact OpenMU bulk stat command forms that can trigger the
+ * legacy multi-point reconnect path. Other command syntax remains server-side.
+ */
+export function parseBulkStatCommand(text: string): BulkStatCommand | null {
+  const normalized = text.trim().toLowerCase();
+  const match =
+    /^\/add(str|agi|vit|ene|cmd)\s+(\d+)$/.exec(normalized) ??
+    /^\/add\s+(str|agi|vit|ene|cmd)\s+(\d+)$/.exec(normalized);
+  if (!match) return null;
+
+  const amount = Number(match[2]);
+  if (!Number.isSafeInteger(amount) || amount <= 1) return null;
+
+  const statByCommand: Record<string, BulkStatName> = {
+    str: 'str',
+    agi: 'agi',
+    vit: 'vit',
+    ene: 'ene',
+    cmd: 'cmd',
+  };
+  const stat = statByCommand[match[1]];
+  return stat ? { stat, amount } : null;
+}
+
 /** Whether a run of this size asks the player first. */
 export function needsConfirm(amount: number): boolean {
   return amount >= CONFIRM_AMOUNT;

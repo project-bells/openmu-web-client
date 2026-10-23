@@ -13,6 +13,10 @@ function maximalConfig(): MuHelperConfig {
     longRangeCounterAttack: true,
     returnToOriginalPosition: true,
     maxSecondsAway: 12,
+    useSelfDefense: true,
+    autoAcceptFriend: true,
+    autoAcceptGuild: true,
+    fallbackBasicAttack: false,
     skills: [19, 41, 232],
     skillIntervals: [0, 7, 45],
     skillConditions: [
@@ -32,6 +36,8 @@ function maximalConfig(): MuHelperConfig {
     healPartyThreshold: 50,
     useHealPotion: true,
     potionThreshold: 30,
+    useManaPotion: true,
+    manaPotionThreshold: 80,
     useDrainLife: true,
     useDarkRaven: true,
     darkRavenMode: 2,
@@ -74,8 +80,12 @@ describe('MU Helper blob codec', () => {
     expect(blob[26]).toBe(0x05); // BuffDurationParty + BuffDuration
     expect(blob[27]).toBe(0);
     expect(blob[28]).toBe(0);
+    expect(blob[33]).toBe(0x08); // client-local fallback basic attack
+    expect(blob[34]).toBe(4); // client-local mana potion threshold (40%)
     // Padding and tail stay zero.
-    for (let i = 29; i < 65; i++) expect(blob[i]).toBe(0);
+    for (let i = 29; i < 65; i++) {
+      if (i !== 33 && i !== 34) expect(blob[i]).toBe(0);
+    }
     for (let i = 245; i < 257; i++) expect(blob[i]).toBe(0);
   });
 
@@ -91,6 +101,8 @@ describe('MU Helper blob codec', () => {
     // skill2 con(1) + precon attacking(2) + subcon 3 (>=5) + repair(5) + pickSelected(7)
     expect(blob[27]).toBe(0x02 | 0x04 | (3 << 3) | 0x20 | 0x80);
     expect(blob[28]).toBe(2);
+    expect(blob[33]).toBe(0x17); // self-defense + friend accept + mana potion
+    expect(blob[34]).toBe(8); // mana potion threshold (80%)
   });
 
   it('round-trips a maximal config', () => {

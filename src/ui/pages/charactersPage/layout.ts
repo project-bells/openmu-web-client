@@ -57,7 +57,7 @@ export const DESC_ROW_MAX = 75;
 export const PANEL_ALPHA = 143 / 255;
 
 export const NAME_MAX_LENGTH = 10;
-export const NAME_MIN_LENGTH = 4;
+export const NAME_MIN_LENGTH = 3;
 
 export const CLASS_TYPE = {
   WIZARD: 0,
@@ -227,7 +227,7 @@ export const CREATE_MESSAGES = textTable({
 });
 
 export function hasSpecialCharacters(name: string): boolean {
-  return !/^[0-9A-Za-z]*$/.test(name);
+  return !/^[0-9A-Za-z\u0E01-\u0E3A\u0E3F-\u0E5B]*$/u.test(name);
 }
 
 export function separateTextIntoLines(

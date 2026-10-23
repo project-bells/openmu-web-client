@@ -436,7 +436,7 @@ ${packetEnum.values.map(v => {
       val += ch;
     }
               
-    return val;
+    return decodePacketString(val);
   }
 `);
 
@@ -580,12 +580,8 @@ ${packetEnum.values.map(v => {
   }
 `);
 
-              writer.write(`  set${name}(str: string, count = ${Number(length)}){
-    const from = ${index};
-    for(let i = 0; i < str.length; i++){
-      const char = str.charCodeAt(i);
-      this.buffer.setUint8(from + i, char);
-    }
+              writer.write(`  set${name}(str: string, count = ${length ?? `this.buffer.byteLength - ${index}`}){
+    writePacketString(this.buffer, ${index}, count, str);
 }
 `);
               return;
@@ -1034,6 +1030,7 @@ for (const name of files) {
   writer.write(`
 import { CharacterClassNumber } from '../types';
 import { SetByteValue, GetByteValue, GetBoolean, SetBoolean } from '../binaryUtils';
+import { decodePacketString, writePacketString } from './packetString';
 
 `);
 

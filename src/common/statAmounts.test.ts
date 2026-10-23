@@ -5,6 +5,7 @@ import {
   MAX_AMOUNT,
   needsConfirm,
   nextStep,
+  parseBulkStatCommand,
 } from './statAmounts';
 
 describe('stat point amount', () => {
@@ -58,6 +59,41 @@ describe('stat point confirmation', () => {
     // 2000 typed with 40 points left is a run of 40: no question.
     expect(needsConfirm(clampAmount(2000, 40))).toBe(false);
     expect(needsConfirm(clampAmount(2000, 500))).toBe(true);
+  });
+});
+
+describe('bulk stat chat commands', () => {
+  it('parses the supported short and generic command forms', () => {
+    expect(parseBulkStatCommand('/addstr 5')).toEqual({
+      stat: 'str',
+      amount: 5,
+    });
+    expect(parseBulkStatCommand('/ADDAGI 12')).toEqual({
+      stat: 'agi',
+      amount: 12,
+    });
+    expect(parseBulkStatCommand('/add vit 3')).toEqual({
+      stat: 'vit',
+      amount: 3,
+    });
+    expect(parseBulkStatCommand('/add ene 4')).toEqual({
+      stat: 'ene',
+      amount: 4,
+    });
+    expect(parseBulkStatCommand('/add cmd 6')).toEqual({
+      stat: 'cmd',
+      amount: 6,
+    });
+  });
+
+  it('leaves single-point and non-exact commands to the server', () => {
+    expect(parseBulkStatCommand('/addstr 1')).toBeNull();
+    expect(parseBulkStatCommand('/addstr')).toBeNull();
+    expect(parseBulkStatCommand('/addstr 5 extra')).toBeNull();
+    expect(parseBulkStatCommand('/add life 5')).toBeNull();
+    expect(parseBulkStatCommand('/addstr -5')).toBeNull();
+    expect(parseBulkStatCommand('/addstr 1.5')).toBeNull();
+    expect(parseBulkStatCommand('/post hello')).toBeNull();
   });
 });
 

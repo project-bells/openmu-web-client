@@ -6,7 +6,7 @@
  * (MuHelperData.cpp). OpenMU stores the blob opaquely, so this layout is the
  * client-to-client contract: a config saved by the reference client decodes
  * here and vice versa. The C++ struct covers bytes 0-244; OpenMU's field is
- * 257 bytes, the tail stays zero.
+ * 257 bytes; client-local settings use unused bytes 33-34.
  */
 
 export const MU_HELPER_BLOB_SIZE = 257;
@@ -38,6 +38,10 @@ export interface MuHelperConfig {
   longRangeCounterAttack: boolean;
   returnToOriginalPosition: boolean;
   maxSecondsAway: number;
+  useSelfDefense: boolean;
+  autoAcceptFriend: boolean;
+  autoAcceptGuild: boolean;
+  fallbackBasicAttack: boolean;
 
   /** [basic, activation 1, activation 2] wire skill numbers, 0 = empty. */
   skills: [number, number, number];
@@ -61,6 +65,8 @@ export interface MuHelperConfig {
 
   useHealPotion: boolean;
   potionThreshold: number;
+  useManaPotion: boolean;
+  manaPotionThreshold: number;
   useDrainLife: boolean;
 
   useDarkRaven: boolean;
@@ -90,6 +96,10 @@ export function defaultMuHelperConfig(): MuHelperConfig {
     longRangeCounterAttack: false,
     returnToOriginalPosition: true,
     maxSecondsAway: 10,
+    useSelfDefense: false,
+    autoAcceptFriend: false,
+    autoAcceptGuild: false,
+    fallbackBasicAttack: true,
     skills: [0, 0, 0],
     skillIntervals: [0, 0, 0],
     skillConditions: [
@@ -109,6 +119,8 @@ export function defaultMuHelperConfig(): MuHelperConfig {
     healPartyThreshold: 60,
     useHealPotion: false,
     potionThreshold: 40,
+    useManaPotion: false,
+    manaPotionThreshold: 40,
     useDrainLife: false,
     useDarkRaven: false,
     darkRavenMode: 0,
@@ -209,6 +221,13 @@ export function encodeMuHelperConfig(config: MuHelperConfig): Uint8Array {
     bit(config.pickSelectedItems, 7);
 
   out[28] = config.darkRavenMode & 0xff;
+  out[33] =
+    bit(config.useSelfDefense, 0) |
+    bit(config.autoAcceptFriend, 1) |
+    bit(config.autoAcceptGuild, 2) |
+    bit(config.fallbackBasicAttack, 3) |
+    bit(config.useManaPotion, 4);
+  out[34] = nib(Math.trunc(config.manaPotionThreshold / 10));
 
   for (let slot = 0; slot < MAX_EXTRA_ITEMS; slot++) {
     const name = config.extraItems[slot];
@@ -291,6 +310,12 @@ export function decodeMuHelperConfig(blob: Uint8Array): MuHelperConfig {
 
   const raven = blob[28];
   config.darkRavenMode = raven === 1 || raven === 2 ? raven : 0;
+  config.useSelfDefense = (blob[33] & 0x01) !== 0;
+  config.autoAcceptFriend = (blob[33] & 0x02) !== 0;
+  config.autoAcceptGuild = (blob[33] & 0x04) !== 0;
+  config.fallbackBasicAttack = (blob[33] & 0x08) !== 0;
+  config.useManaPotion = (blob[33] & 0x10) !== 0;
+  config.manaPotionThreshold = (blob[34] & 0x0f) * 10;
 
   config.extraItems = [];
   for (let slot = 0; slot < MAX_EXTRA_ITEMS; slot++) {

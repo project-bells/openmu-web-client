@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { matchesSearch, type ServerProfile } from './serverConfig';
+import {
+  connectServerAddress,
+  effective,
+  matchesSearch,
+  ServerConfig,
+  type ServerProfile,
+} from './serverConfig';
 
 const world = (patch: Partial<ServerProfile> = {}): ServerProfile => ({
   id: 'list:ignies.net',
@@ -20,6 +26,47 @@ describe('matchesSearch', () => {
   it('keeps every world when nothing was typed', () => {
     expect(matchesSearch(world(), '')).toBe(true);
     expect(matchesSearch(world(), '   ')).toBe(true);
+  });
+
+  describe('locked server configuration', () => {
+    it('offers only MU Origins and ignores saved, listed, and URL-style changes', () => {
+      const other = world({
+        id: 'list:other.example',
+        name: 'Other server',
+        csHost: 'other.example',
+      });
+
+      ServerConfig.setListed([other]);
+      ServerConfig.select(other.id);
+      ServerConfig.update(ServerConfig.activeId, { csHost: 'other.example' });
+      ServerConfig.add({ csHost: 'other.example' });
+
+      expect(ServerConfig.all).toHaveLength(1);
+      expect(ServerConfig.active).toMatchObject({
+        name: 'MU Origins',
+        csHost: 'play.muorigins.online',
+        csPort: 44405,
+        version: 'S6EP3',
+      });
+      expect(ServerConfig.readOnly).toBe(true);
+      expect(connectServerAddress()).toEqual({
+        host: 'play.muorigins.online',
+        port: 44405,
+      });
+    });
+
+    it('uses the fixed endpoint even when a caller supplies another profile', () => {
+      const other = world({
+        csHost: 'other.example',
+        csPort: 55555,
+        wsUrl: 'wss://other.example',
+      });
+
+      expect(effective(other)).toMatchObject({
+        csHost: 'play.muorigins.online',
+        csPort: 44405,
+      });
+    });
   });
 
   it('matches the name, whatever the case', () => {

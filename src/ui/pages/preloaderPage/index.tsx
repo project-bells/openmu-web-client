@@ -9,7 +9,6 @@ import {
   playableHere,
   ServerConfig,
 } from '../../../common/serverConfig';
-import { ServerList } from '../../../common/serverList';
 import { loadVersionUi, versionTags, versionUi } from '../../../version';
 import type { PregameBackdrop } from '../../../version/uiContract';
 import { uiClick } from '../../../libs/sfx';
@@ -21,7 +20,6 @@ import { MuFlag } from '../../components/muFlag';
 import { Backdrop } from './backdrop';
 import { Button, Icon, Select, type IconName } from './controls';
 import { WorldsView } from './worldsView';
-import { SetupView } from './setupView';
 import { DownloadView } from './downloadView';
 import { LoadingRunner } from './loadingRunner';
 import { LogoLight } from './logoLight';
@@ -46,7 +44,7 @@ const LEAVE_MS = 320;
 const HELLFIRE_SOUND: Sounds = 'Sound/sHellFire';
 const HELLFIRE_SOUND_WAIT_MS = 600;
 
-type Section = 'worlds' | 'setup' | 'download';
+type Section = 'worlds' | 'download';
 
 /**
  * The card's tabs, as the landing page lists the panel's: a label, the one
@@ -68,18 +66,11 @@ const SECTIONS: {
     marker: '01  Lorencia',
   },
   {
-    key: 'setup',
-    label: 'worlds.tabSetup',
-    desc: 'worlds.tabSetupDesc',
-    icon: 'server',
-    marker: '02  Devias',
-  },
-  {
     key: 'download',
     label: 'worlds.tabDownload',
     desc: 'worlds.tabDownloadDesc',
     icon: 'download',
-    marker: '03  Noria',
+    marker: '02  Noria',
   },
 ];
 
@@ -112,13 +103,9 @@ const READY_DELAY_MS = 700;
  */
 type Phase = 'loading' | 'ready' | 'open';
 
-/** The share of the bar the character scene's scenery takes, after the login scene. */
-const CHARACTERS_SHARE = 0.2;
-
 /**
- * How far the loading behind this page has got: the login scene, then the
- * character scene's scenery. `mapIndex` is not observable, but every warp
- * flips `sceneLoading`, which is.
+ * How far the login scene has loaded behind this page. `mapIndex` is not
+ * observable, but every warp flips `sceneLoading`, which is.
  */
 function backgroundLoad(backdrop: PregameBackdrop | null): {
   progress: number;
@@ -127,7 +114,6 @@ function backgroundLoad(backdrop: PregameBackdrop | null): {
   // Read before anything can return: an observer only redraws for what it read.
   const loading = Store.sceneLoading;
   const loaded = Store.loadingProgress;
-  const warmed = pregameLoad.characters;
 
   if (!backdrop) return { progress: 0, done: false };
 
@@ -136,15 +122,7 @@ function backgroundLoad(backdrop: PregameBackdrop | null): {
     (backdrop.kind !== 'world' || Store.world?.mapIndex === backdrop.login);
   const login = loginReady ? 1 : loading ? loaded : 0;
 
-  // A set-piece backdrop has no second world to warm.
-  if (backdrop.kind !== 'world') return { progress: login, done: loginReady };
-
-  // The warm starts once the login map's terrain is in, while that scene is
-  // still settling, so the two shares fill side by side.
-  return {
-    progress: login * (1 - CHARACTERS_SHARE) + warmed * CHARACTERS_SHARE,
-    done: loginReady && warmed >= 1,
-  };
+  return { progress: login, done: loginReady };
 }
 
 /**
@@ -161,6 +139,7 @@ export const PreloaderPage = observer(() => {
   const [language, setLanguage] = useState(ALL);
   const [search, setSearch] = useState('');
   const [leaving, setLeaving] = useState(false);
+  const autoEntered = useRef(false);
   // The card folds away to show the map and its credits, and back.
   const [panelHidden, setPanelHidden] = useState(false);
   const leaveTimer = useRef(0);
@@ -274,7 +253,7 @@ export const PreloaderPage = observer(() => {
    * broken client rather than the wrong one.
    */
   const enter = (id = selected.id) => {
-    if (!open || ServerConfig.isEmpty || leaving) return;
+     if (ServerConfig.isEmpty || leaving) return;
 
     const world = ServerConfig.all.find(w => w.id === id);
     if (world && !playableHere(world)) return;
@@ -284,9 +263,12 @@ export const PreloaderPage = observer(() => {
     leave(() => Store.playOnline());
   };
 
-  const offline = () => {
-    if (!leaving) leave(() => Store.playOffline());
-  };
+  useEffect(() => {
+    if (phase !== 'ready' || !canEnter || autoEntered.current) return;
+
+    autoEntered.current = true;
+    enter(selected.id);
+  }, [phase, canEnter, selected.id]);
 
   // Enter enters from the grid or the search box. Anywhere else it belongs to
   // what has the focus: Enter in a server address or a password is not a
@@ -302,10 +284,7 @@ export const PreloaderPage = observer(() => {
       const free =
         !typing && target?.tagName !== 'BUTTON' && target?.tagName !== 'A';
 
-      if (phase === 'ready' && (e.key === 'Enter' || e.key === ' ')) {
-        // Any Enter is Start while Start is all there is.
-        setPhase('open');
-      } else if (e.key === 'Escape' && typing) {
+      if (e.key === 'Escape' && typing) {
         target?.blur();
       } else if (
         open &&
@@ -333,12 +312,16 @@ export const PreloaderPage = observer(() => {
   const status = [
     versionTags().join(', '),
     t('worlds.sceneReady'),
-    ServerList.state === 'loading'
-      ? t('servers.loading')
-      : ServerList.state === 'error'
-        ? t('server.listOffline')
-        : null,
   ].filter((part): part is string => !!part);
+
+  if (!open) {
+    return (
+      <div
+        className={`ws-page ws-black-screen${leaving ? ' is-leaving' : ''}`}
+        aria-hidden="true"
+      />
+    );
+  }
 
   return (
     <div
@@ -377,22 +360,12 @@ export const PreloaderPage = observer(() => {
         <div className="ws-stage">
           <LightningLine phase={phase} />
 
-          {phase === 'loading' ? (
+          {phase !== 'open' ? (
             <LoadingRunner
               progress={load.progress}
               done={load.done}
               label={loadText}
             />
-          ) : phase === 'ready' ? (
-            <button
-              type="button"
-              className="ws-start anim-host"
-              autoFocus
-              onClick={uiClick(() => setPhase('open'))}
-            >
-              <Icon name="play" />
-              {t('worlds.start')}
-            </button>
           ) : (
             <>
               {/* A line spread out from where Start was, then split in two:
@@ -449,9 +422,6 @@ export const PreloaderPage = observer(() => {
                     >
                       {t('worlds.enter')}
                     </Button>
-                    <Button disabled={leaving} onClick={offline}>
-                      {t('preloader.playOffline')}
-                    </Button>
                   </div>
                 </div>
 
@@ -482,12 +452,9 @@ export const PreloaderPage = observer(() => {
                   <div className="ws-body">
                     {section === 'download' ? (
                       <DownloadView />
-                    ) : section === 'setup' ? (
-                      <SetupView />
                     ) : (
                       <WorldsView
                         worlds={worlds}
-                        total={all.length}
                         search={search}
                         onSearch={setSearch}
                         language={language}

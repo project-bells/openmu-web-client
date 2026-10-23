@@ -156,6 +156,20 @@ describe('serverlist.md', () => {
 
   it('publishes at least one world', () => {
     expect(published.length).toBeGreaterThan(0);
+    expect(published).toHaveLength(1);
+  });
+
+  it('publishes MU Origins as S6EP3 through the original-client connect port', () => {
+    expect(published).toContainEqual(
+      expect.objectContaining({
+        id: 'list:play.muorigins.online:44405',
+        name: 'MU Origins',
+        version: 'S6EP3',
+        csHost: 'play.muorigins.online',
+        csPort: 44405,
+        wsUrl: 'ws://localhost:3000',
+      })
+    );
   });
 
   // The prose around the entries shows the syntax, which means it is written

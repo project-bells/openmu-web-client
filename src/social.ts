@@ -36,6 +36,14 @@ import {
   type EmojiBubbleId,
 } from './common/emojiBubbles';
 import { localCommandOf } from './common/chatCommands';
+import { StatAllocation } from './common/statAllocation';
+import {
+  clampAmount,
+  needsConfirm,
+  parseBulkStatCommand,
+} from './common/statAmounts';
+import { getStatName, StatType } from './common/characterStats';
+import { MsgWinCode } from './common/msgWin';
 import {
   chatEmojiAdvance,
   chatEmojiBubbleOf,
@@ -662,6 +670,44 @@ export const Social = new (class _Social {
       else Commands.run(local.local, Store.world?.currentPointerTarget);
       this.remember(this.chatHistory, text);
       return true;
+    }
+
+    const bulkStat = parseBulkStatCommand(text);
+    if (bulkStat) {
+      if (StatAllocation.running) {
+        this.errorMessage(t('msgWin.pleaseWait'));
+        this.remember(this.chatHistory, text);
+        return true;
+      }
+
+      const amount = clampAmount(bulkStat.amount, Store.playerData.points);
+      if (amount > 0) {
+        const stat = {
+          str: StatType.Strength,
+          agi: StatType.Agility,
+          vit: StatType.Vitality,
+          ene: StatType.Energy,
+          cmd: StatType.Leadership,
+        }[bulkStat.stat];
+        const start = () => {
+          if (!StatAllocation.start(stat, amount)) {
+            this.errorMessage(t('msgWin.pleaseWait'));
+          }
+        };
+
+        if (needsConfirm(amount)) {
+          Store.popUpMsgWin(
+            MsgWinCode.ConfirmAddPoints,
+            { count: amount, stat: getStatName(stat) },
+            start
+          );
+        } else {
+          start();
+        }
+
+        this.remember(this.chatHistory, text);
+        return true;
+      }
     }
 
     const prefix = text.startsWith('/') ? '' : CHAT_INPUT_PREFIX[this.chatInputMode];

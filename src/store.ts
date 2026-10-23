@@ -706,6 +706,7 @@ export const Store = new (class _Store {
   username = '';
   password = '';
   serverList: ReturnType<ServerListResponsePacket['getServers']> = [];
+  autoConnecting = false;
   /** `g_ServerListManager->GetSelectServerName()` / `Index`: the login window's server line. */
   selectedServer: {
     name: string;
@@ -1087,13 +1088,14 @@ export const Store = new (class _Store {
 
   world: World | null = null;
 
-  isOffline = location.href.includes('offline');
+  isOffline = false;
 
   constructor() {
     makeObservable(this, {
       username: observable,
       password: observable,
       serverList: observable,
+      autoConnecting: observable,
       selectedServer: observable,
       uiState: observable,
       connectionLost: observable,
@@ -1157,7 +1159,6 @@ export const Store = new (class _Store {
       selectSkill: action,
       assignSkillHotkey: action,
       setTestItems: action,
-      playOffline: action,
       playOnline: action,
       onSocketLost: action,
     });
@@ -1178,7 +1179,7 @@ export const Store = new (class _Store {
     this.loadAccount();
   }
 
-  playOffline() {
+  private playOffline() {
     if (!this.world) return;
 
     const map = offlineMapFromUrl();
@@ -1240,6 +1241,8 @@ export const Store = new (class _Store {
 
   playOnline() {
     this.uiState = UIState.Servers;
+    this.autoConnecting = true;
+    this.serverList = [];
     // The login fields belong to the world being entered, and which world that
     // is was decided on the screen this was called from.
     this.loadAccount();

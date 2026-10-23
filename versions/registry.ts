@@ -1,12 +1,10 @@
 /**
- * THE REGISTRY of game versions this client ships. One build carries every
- * entry; exactly one is active per page load, picked at runtime from the
- * server-list entry (src/version/index.ts `loadGameVersion`).
+ * THE REGISTRY of game versions this client can play. Exactly one entry is
+ * available in this MU Origins build.
  *
  * Entry metadata (`id`, `label`, `listTag`) is eager so the server picker
  * can answer "can this client play that world?" without loading a version
- * body; the bodies come in through the two dynamic imports, each its own
- * chunk, so a version the player never touches is never fetched.
+ * body; the body comes in through a dynamic import.
  *
  * Invariant: a version's `index.ts` (the `load()` module) must import only
  * the contract, generated packet files and its own data - never app code.
@@ -18,9 +16,7 @@ import type { GameVersion, GameVersionId } from '../src/version/contract';
 import type { VersionUi } from '../src/version/uiContract';
 
 /**
- * The three packet lists a version exports. Typed against the season6 set
- * for now; step (b) widens these to a union of the shipped versions' lists
- * so the EventBus keeps literal packet-name keys for all of them.
+ * The three packet lists the S6EP3 client exports.
  */
 export type VersionPackets = {
   ServerToClientPackets: typeof import('./season6/packets')['ServerToClientPackets'];
@@ -56,12 +52,5 @@ export const VERSION_REGISTRY: readonly VersionEntry[] = [
     listTag: 'S6EP3',
     load: () => import('./season6'),
     loadUi: () => import('./season6/ui'),
-  },
-  {
-    id: 'v097d',
-    label: 'MU 0.97d',
-    listTag: 'V097D',
-    load: () => import('./v097d'),
-    loadUi: () => import('./v097d/ui'),
   },
 ];

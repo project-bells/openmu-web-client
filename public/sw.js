@@ -23,11 +23,8 @@ const CACHE = 'mu-assets-v1';
 /** Only these are ours. Everything else is passed straight through. */
 const ASSET_PREFIXES = [
   '/game-assets/',
-  '/game-assets-v097d/',
   '/packs/',
-  '/packs-v097d/',
   '/Data/',
-  '/Data-v097d/',
   '/items/',
 ];
 

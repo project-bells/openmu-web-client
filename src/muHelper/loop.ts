@@ -4,11 +4,18 @@ import { gameVersion } from '../version';
 import { skillDefinition } from '../common/skillsDatabase';
 import { calcMaxDurability, isJewel, itemDef } from '../common/itemStats';
 import { InventoryConstants } from '../common/inventoryConstants';
+import { SKILL_TO_EFFECT } from '../common/magicEffects';
+import { skills } from '../skills';
 import { PetCommandModeEnum } from '../common/packets/ClientToServerPackets';
 import { isAttackableEntity } from '../ecs/systems/attackSystem';
 import type { Entity, World } from '../ecs/world';
 import { ensureMuHelperWatching, MuHelperState } from './state';
 import type { MuHelperConfig } from './config';
+import {
+  activationConditionMatches,
+  isManaRestoringPotion,
+  isMonsterAttacking,
+} from './behavior';
 
 /**
  * The MU Helper automation loop, ported from `CMuHelper` (MuHelper.cpp). It
@@ -35,9 +42,6 @@ const STOP_REQUEST_INTERVAL = 3;
 /** Seconds between re-issued regroup walks. */
 const MOVE_REISSUE_SECONDS = 1;
 
-const HEAL_SKILL = 26; // Heal (Elf)
-const DRAIN_LIFE_SKILL = 214; // Drain Life (Summoner)
-
 /**
  * Skill name -> `MagicEffectStatus` id, for the "already buffed" check
  * (`BuffTarget`'s `g_isCharacterBuff` calls). Entities carry the active
@@ -52,6 +56,9 @@ const BUFF_EFFECT_BY_NAME: Readonly<Record<string, number>> = {
   'Greater Fortitude': 8,
   Berserker: 81,
   'Expansion of Wizardry': 82,
+  Thorns: 71,
+  'Increase Health': 130,
+  'Increase Block': 131,
 };
 
 interface Point {
@@ -75,6 +82,7 @@ let currentTarget: Entity | null = null;
 let petActivated = false;
 let timerBuffOngoing = false;
 let lastTimerBuffSecond = -1;
+let lastSkillTimerSeconds: [number, number, number] = [-1, -1, -1];
 let repairCooldown = 0;
 let stopRequestCooldown = 0;
 let moveReissueCooldown = 0;
@@ -94,6 +102,7 @@ function resetRuntime(): void {
   petActivated = false;
   timerBuffOngoing = false;
   lastTimerBuffSecond = -1;
+  lastSkillTimerSeconds = [-1, -1, -1];
   repairCooldown = 0;
   stopRequestCooldown = 0;
   moveReissueCooldown = 0;
@@ -129,6 +138,14 @@ function entityTile(e: Entity): Point {
 
 function isLearned(num: number): boolean {
   return num > 0 && Store.skills.some(s => s.number === num);
+}
+
+function learnedSkillNamed(prefix: string): number {
+  const wanted = prefix.toLowerCase();
+  return Store.skills.find(skill => {
+    const name = skillDefinition(skill.number)?.name.toLowerCase() ?? '';
+    return name === wanted || name.startsWith(`${wanted} `);
+  })?.number ?? 0;
 }
 
 /** `(life * 100 + max - 1) / max` - the original's ceiling percent. */
@@ -186,7 +203,12 @@ function buffTarget(world: World, target: Entity, num: number): boolean {
   const def = skillDefinition(num);
   if (!def || !isLearned(num)) return false;
 
-  const effect = BUFF_EFFECT_BY_NAME[def.name];
+  const effect =
+    SKILL_TO_EFFECT[num] ??
+    BUFF_EFFECT_BY_NAME[def.name] ??
+    Object.entries(BUFF_EFFECT_BY_NAME).find(([name]) =>
+      def.name.startsWith(`${name} `)
+    )?.[1];
   if (effect !== undefined) {
     if (target.buffs?.has(effect) && !timerBuffOngoing) return false;
   } else {
@@ -261,14 +283,31 @@ function findHealingPotionSlot(): number {
   return -1;
 }
 
-function nearestTarget(world: World, hero: Entity, maxDistance: number): Entity | null {
+function findManaPotionSlot(): number {
+  const items = Store.playerData.items;
+  for (let slot = InventoryConstants.EquippableSlotsCount; slot < items.length; slot++) {
+    const item = items[slot];
+    if (item && isManaRestoringPotion(item.group, item.num)) return slot;
+  }
+  return -1;
+}
+
+function nearestTarget(
+  world: World,
+  hero: Entity,
+  maxDistance: number,
+  attackingOnly = false,
+  farthest = false
+): Entity | null {
   const from = heroTile(hero);
   let best: Entity | null = null;
-  let bestDist = maxDistance + 1;
+  let bestDist = farthest ? -1 : maxDistance + 1;
   for (const e of world.netObjsQuery.entities) {
     if (!isAttackableEntity(world, e)) continue;
+    if (e.worldIndex !== undefined && e.worldIndex !== world.mapIndex) continue;
+    if (attackingOnly && !isMonsterAttacking(e)) continue;
     const dist = tileDistance(from, entityTile(e));
-    if (dist < bestDist) {
+    if ((farthest && dist > bestDist) || (!farthest && dist < bestDist)) {
       bestDist = dist;
       best = e;
     }
@@ -281,7 +320,18 @@ function countTargetsNearby(world: World, hero: Entity, maxDistance: number): nu
   let count = 0;
   for (const e of world.netObjsQuery.entities) {
     if (!isAttackableEntity(world, e)) continue;
+    if (e.worldIndex !== undefined && e.worldIndex !== world.mapIndex) continue;
     if (tileDistance(from, entityTile(e)) <= maxDistance) count++;
+  }
+  return count;
+}
+
+function countAttackingTargets(world: World): number {
+  let count = 0;
+  for (const e of world.netObjsQuery.entities) {
+    if (!isAttackableEntity(world, e)) continue;
+    if (e.worldIndex !== undefined && e.worldIndex !== world.mapIndex) continue;
+    if (isMonsterAttacking(e)) count++;
   }
   return count;
 }
@@ -289,15 +339,16 @@ function countTargetsNearby(world: World, hero: Entity, maxDistance: number): nu
 /** `CMuHelper::RecoverHealth`: heal, drain life, then the potion. */
 function recoverHealth(world: World, hero: Entity, config: MuHelperConfig): boolean {
   const hpPercent = heroHpPercent();
+  const healSkill = learnedSkillNamed('Heal');
 
-  if (config.autoHeal && isLearned(HEAL_SKILL)) {
+  if (config.autoHeal && healSkill > 0) {
     if (config.autoHealParty && Social.partyMembers.length > 0) {
       const members = Social.partyMembers;
       const member = members[healPartyIndex % members.length];
       healPartyIndex = (healPartyIndex + 1) % members.length;
       if (member) {
         if (member.name === Store.playerData.name) {
-          if (hpPercent <= config.healThreshold && castSkill(world, HEAL_SKILL, hero)) {
+          if (hpPercent <= config.healThreshold && castSkill(world, healSkill, hero)) {
             return false;
           }
         } else if (
@@ -309,28 +360,39 @@ function recoverHealth(world: World, hero: Entity, config: MuHelperConfig): bool
           if (
             target &&
             tileDistance(heroTile(hero), entityTile(target)) <= MAX_ACTIONABLE_DISTANCE &&
-            castSkill(world, HEAL_SKILL, target)
+            castSkill(world, healSkill, target)
           ) {
             return false;
           }
         }
       }
-    } else if (hpPercent <= config.healThreshold && castSkill(world, HEAL_SKILL, hero)) {
+    } else if (hpPercent <= config.healThreshold && castSkill(world, healSkill, hero)) {
       return false;
     }
   }
 
+  const drainLifeSkill = learnedSkillNamed('Drain Life');
   if (
     config.useDrainLife &&
-    isLearned(DRAIN_LIFE_SKILL) &&
+    drainLifeSkill > 0 &&
     hpPercent <= config.healThreshold
   ) {
     const target = nearestTarget(world, hero, distanceByRange(config.huntingRange));
-    if (target && castSkill(world, DRAIN_LIFE_SKILL, target)) return false;
+    if (target && castSkill(world, drainLifeSkill, target)) return false;
   }
 
   if (config.useHealPotion && hpPercent <= config.potionThreshold) {
     const slot = findHealingPotionSlot();
+    if (slot >= 0) Store.consumeItemRequest(slot);
+  }
+
+  const { currentMP, maxMP } = Store.playerData;
+  const mpPercent =
+    maxMP <= 0
+      ? 100
+      : Math.trunc((currentMP * 100 + maxMP - 1) / maxMP);
+  if (config.useManaPotion && mpPercent <= config.manaPotionThreshold) {
+    const slot = findManaPotionSlot();
     if (slot >= 0) Store.consumeItemRequest(slot);
   }
 
@@ -404,9 +466,9 @@ function regroup(world: World, hero: Entity, config: MuHelperConfig): boolean {
 
 /**
  * `CMuHelper::SelectAttackSkill`: activation skill 1/2 on their timer or
- * mob-count condition, else the basic skill. The "mobs attacking" basis
- * falls back to the nearby count - OpenMU's damage packets name the victim,
- * not the attacker, so the client cannot know who is attacking it.
+ * mob-count condition, else the basic skill. OpenMU does not identify the
+ * monster's victim in its damage update, so "attacking" uses visible attack
+ * animations as the closest client-side signal.
  */
 function selectAttackSkill(world: World, hero: Entity, config: MuHelperConfig): number {
   const nearby = countTargetsNearby(
@@ -414,16 +476,31 @@ function selectAttackSkill(world: World, hero: Entity, config: MuHelperConfig): 
     hero,
     distanceByRange(config.huntingRange)
   );
+  const attacking = countAttackingTargets(world);
 
   for (const index of [1, 2] as const) {
     const num = config.skills[index];
     if (!isLearned(num)) continue;
     const cond = config.skillConditions[index];
     const interval = config.skillIntervals[index];
-    if (cond.onTimer && interval > 0 && secondsElapsed % interval === 0) {
+    const timerTriggered =
+      cond.onTimer &&
+      interval > 0 &&
+      secondsElapsed > 0 &&
+      secondsElapsed % interval === 0;
+    if (
+      activationConditionMatches(
+        cond,
+        interval,
+        secondsElapsed,
+        nearby,
+        attacking,
+        lastSkillTimerSeconds[index] === secondsElapsed
+      )
+    ) {
+      if (timerTriggered) lastSkillTimerSeconds[index] = secondsElapsed;
       return num;
     }
-    if (cond.onCondition && nearby >= cond.minMobs) return num;
   }
 
   return isLearned(config.skills[0]) ? config.skills[0] : 0;
@@ -432,14 +509,22 @@ function selectAttackSkill(world: World, hero: Entity, config: MuHelperConfig): 
 /** `CMuHelper::Attack` (+ `SimulateComboAttack`) through the cast seam. */
 function attack(world: World, hero: Entity, config: MuHelperConfig): void {
   const huntDistance = distanceByRange(config.huntingRange);
+  const counterAttack = config.longRangeCounterAttack || config.useSelfDefense;
 
   if (
     currentTarget &&
     (!isAttackableEntity(world, currentTarget) ||
       currentTarget.dying ||
-      tileDistance(heroTile(hero), entityTile(currentTarget)) > huntDistance + 4)
+      (tileDistance(heroTile(hero), entityTile(currentTarget)) > huntDistance + 4 &&
+        !(counterAttack && isMonsterAttacking(currentTarget))))
   ) {
     currentTarget = null;
+  }
+  if (!currentTarget && config.longRangeCounterAttack) {
+    currentTarget = nearestTarget(world, hero, Number.POSITIVE_INFINITY, true, true);
+  }
+  if (!currentTarget && config.useSelfDefense) {
+    currentTarget = nearestTarget(world, hero, huntDistance, true);
   }
   if (!currentTarget) currentTarget = nearestTarget(world, hero, huntDistance);
   if (!currentTarget) {
@@ -447,16 +532,26 @@ function attack(world: World, hero: Entity, config: MuHelperConfig): void {
     return;
   }
 
-  let skillNum: number;
   if (config.useCombo && config.skills.every(n => isLearned(n))) {
-    skillNum = config.skills[comboState];
-    comboState = (comboState + 1) % 3;
-  } else {
-    skillNum = selectAttackSkill(world, hero, config);
+    if (world.castRequest) return;
+    const skillNum = config.skills[comboState];
+    if (skills.canUse(skillNum)) {
+      if (castSkill(world, skillNum, currentTarget)) {
+        comboState = (comboState + 1) % 3;
+        return;
+      }
+    }
+    if (!world.castRequest && config.fallbackBasicAttack) world.attackTarget = currentTarget;
+    return;
   }
-  if (skillNum <= 0) return;
 
-  castSkill(world, skillNum, currentTarget);
+  if (world.castRequest) return;
+  const skillNum = selectAttackSkill(world, hero, config);
+  if (skillNum > 0 && skills.canUse(skillNum)) {
+    if (castSkill(world, skillNum, currentTarget)) return;
+  }
+
+  if (!world.castRequest && config.fallbackBasicAttack) world.attackTarget = currentTarget;
 }
 
 /** `CMuHelper::RepairEquipments` at the 50% durability line, throttled. */

@@ -356,6 +356,20 @@ const HuntTab = observer(
             onChange={value => edit(d => (d.longRangeCounterAttack = value))}
           />
         </div>
+        <div className="helper-row">
+          <Check
+            label={t('muHelper.selfDefense')}
+            checked={draft.useSelfDefense}
+            onChange={value => edit(d => (d.useSelfDefense = value))}
+          />
+        </div>
+        <div className="helper-row">
+          <Check
+            label={t('muHelper.fallbackBasicAttack')}
+            checked={draft.fallbackBasicAttack}
+            onChange={value => edit(d => (d.fallbackBasicAttack = value))}
+          />
+        </div>
 
         <div className="helper-row">
           <span className="helper-label">{t('muHelper.basicSkill')}</span>
@@ -487,6 +501,23 @@ const HuntTab = observer(
           min={0}
           max={10}
           onChange={value => edit(d => (d.potionThreshold = value * 10))}
+        />
+        <div className="helper-row">
+          <Check
+            label={t('muHelper.manaPotion')}
+            checked={draft.useManaPotion}
+            onChange={value => edit(d => (d.useManaPotion = value))}
+          />
+          <span className="helper-hint">
+            {t('muHelper.atPercentMp', { percent: draft.manaPotionThreshold })}
+          </span>
+        </div>
+        <Stepper
+          label=""
+          value={draft.manaPotionThreshold / 10}
+          min={0}
+          max={10}
+          onChange={value => edit(d => (d.manaPotionThreshold = value * 10))}
         />
 
         {summoner && (

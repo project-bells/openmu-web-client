@@ -119,8 +119,8 @@ if (!ALLOW_RULES.length) {
   );
 }
 
-/** The per-packet hex dump. Priceless locally, far too loud against a real server. */
-const LOG_PACKETS = (process.env.LOG_PACKETS ?? "on") !== "off";
+/** Raw packet dumps can contain player data; require explicit opt-in. */
+const LOG_PACKETS = process.env.LOG_PACKETS === "on";
 
 type RelayData = {
   kind: "relay";
@@ -458,7 +458,11 @@ Bun.serve<WebSocketData>({
           open(socket) {
             relay.data.tcpSocket = socket;
           },
-          close(socket) { },
+          close(socket) {
+            console.log(
+              `tcp closed: ${relay.data.targetHost}:${relay.data.targetPort}`
+            );
+          },
           drain(socket) { },
           error(socket, error) {
             console.log(`tcp error:`, error);
@@ -478,6 +482,9 @@ Bun.serve<WebSocketData>({
             relay.close();
           }, // connection failed
           end(socket) {
+            console.log(
+              `tcp end from server: ${relay.data.targetHost}:${relay.data.targetPort}`
+            );
             relay.data.tcpSocket = undefined;
             relay.close();
           }, // connection closed by server
@@ -533,6 +540,9 @@ Bun.serve<WebSocketData>({
       }
 
       const relay = ws as ServerWebSocket<RelayData>;
+      console.log(
+        `client websocket closed: ${relay.data.targetHost}:${relay.data.targetPort} (code ${code})`
+      );
       clients.delete(relay);
       relay.data.presence.close();
       // Before the tracker closes the session: the gone / leave notices

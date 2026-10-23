@@ -54,18 +54,16 @@ export const StatAllocation = new (class _StatAllocation {
     return this.run?.stat === stat;
   }
 
-  start(stat: StatType, amount: number): void {
-    if (this.run) {
-      this.cancel();
-      return;
-    }
+  start(stat: StatType, amount: number): boolean {
+    if (this.run) return false;
 
     const wanted = clampAmount(amount, Store.playerData.points);
-    if (wanted <= 0) return;
+    if (wanted <= 0) return false;
 
     this.run = { stat, sent: 0, added: 0, wanted };
     this.listen();
     this.step();
+    return true;
   }
 
   cancel(): void {

@@ -38,7 +38,6 @@ import {
 } from './libs/mu/preloadSprites';
 import { installPerfOverlay, recordFrame } from './libs/perfOverlay';
 import { csmCacheStats } from './scenes/shadows';
-import { refreshServerList } from './common/serverList';
 import { ensureCacheWorker } from './common/assetDownload';
 import { sceneCovered } from './common/sceneCover';
 
@@ -103,6 +102,15 @@ reaction(
       : scaleSeam ?? renderScaleForStep(GameOptions.renderScale),
   scale => applyRenderScale(engine, scale),
   { fireImmediately: true }
+);
+
+reaction(
+  () => Store.uiState,
+  state => {
+    if (state !== UIState.Preloader && state !== UIState.Servers) {
+      void preloadWorldSprites();
+    }
+  }
 );
 
 // The browser's own chords (Ctrl+W, Ctrl+R, F5, the zoom keys) taken off the
@@ -312,19 +320,10 @@ EventBus.on('requestWarp', ({ map, pos }) => {
 
 preloadPregameSprites()
   .finally(() => Store.setSpritesLoading(false))
-  .then(() => preloadWorldSprites());
-
-// The published server list (`common/serverList.ts`), once per launch. Nothing
-// waits on it: it fills the picker when it lands, and the saved servers are
-// what the client uses until then - or instead, if it never lands.
-refreshServerList();
+  .catch(err => console.error('Could not preload pregame sprites:', err));
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <App />
   </React.StrictMode>
 );
-
-if (Store.isOffline) {
-  Store.playOffline();
-}

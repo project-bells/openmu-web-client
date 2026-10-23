@@ -67,10 +67,4 @@ list, which is why the examples above name nothing.
 
 Lines that do not parse are dropped, so the prose around them costs nothing.
 
-[S6EP3:Ignies:Season 6 Episode 3, played in the browser:es:https://github.com/Ignies/OpenMu-Client-Babylon/blob/main/2651842.jpg?raw=true](ignies.net)
-- 0: Testing Server
-  - 0: X100 PVP
-  - 1: X100 PVE
-[S6EP3:openmu.com.br:Season 6 Episode 3,:br:](openmu.com.br)
-- 0: OpenMU.com.br Server
-  - 0: Server 1
+[S6EP3:MU Origins:Season 6 Episode 3](play.muorigins.online:44405@ws://localhost:3000)

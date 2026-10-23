@@ -72,6 +72,15 @@
   }
 }
 
+.ws-page.ws-black-screen {
+  background: #000 url('/ui/world_select/loading-background.jpg') center /
+    cover no-repeat;
+
+  &::after {
+    display: none;
+  }
+}
+
 // A reset that every class below outranks.
 :where(.ws-page) button {
   font: inherit;

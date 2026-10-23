@@ -174,7 +174,9 @@ const leftGroups = groups.slice(0, LEFT_GROUP_MAX);
         {Store.connectionLost && (
           <div className="servers-notice">{t('servers.connectionLost')}</div>
         )}
-        {groups.length === 0 ? (
+        {Store.autoConnecting ? (
+          <div className="servers-loading">{t('worlds.scenePreparing')}</div>
+        ) : groups.length === 0 ? (
           <div className="servers-loading">{t('servers.loading')}</div>
         ) : (
           <>

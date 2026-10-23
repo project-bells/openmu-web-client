@@ -22,10 +22,12 @@ https://github.com/user-attachments/assets/465fa86a-1a7b-4c26-9794-aba5297c5e19
 https://github.com/user-attachments/assets/35c67fab-1c7c-4c41-b5a0-97cc0c90fd6a
 
 
-Client for OpenMU made in BabylonJS based of afrokick's JSClient, the client is being developed to work with any version available and connect on the go to different servers either stored in this repo's serverlist.md or added manually to the list.
+Client for OpenMU made in BabylonJS based of afrokick's JSClient. This client
+build is dedicated to MU Origins (`play.muorigins.online:44405`); world
+selection and endpoint editing are locked to this server.
 
 
-Current working ~somewhat version is S6EP3; 0.97d ships beside it (tag V097D) and more are to be added down the line.
+This build supports only S6EP3. The 0.97d client version is not available.
 
 ## Installing
 
@@ -57,15 +59,14 @@ bun run proxy      # ws<->tcp bridge, in a second shell
 
 The proxy is not optional: a browser cannot open a TCP socket, so every packet to OpenMU goes
 through it. Run it next to the client.
+For a hosted build, set `VITE_WS_HOST` (including `ws://` or `wss://`) and
+`VITE_WS_PORT` to the MU Origins proxy address; the connect-server address is
+fixed in the client.
 
 The proxy also carries the band system (instruments played live): those frames never reach
 OpenMU, the proxy relays them to the players who can see the performer. `BAND=off` disables
 it, `BAND_MAX_PERFORMERS` (16) and `BAND_MAX_RECEIVERS` (48) cap it, and it needs `TRACK`
 on. It logs a `band: {...}` stats line once a minute when something happened.
-
-**No server, no Docker?** `bun run dev` and open <http://localhost:5173/offline> for the
-single-player offline demo.
-
 
 ```
 [▓▓▓▓▓▓▓▓▓░] Networking & Protocol (9/10):
@@ -73,8 +74,7 @@ single-player offline demo.
      [ Handlers ]: 127/242 S2C wired, 97/190 C2S sent. Remainder is 0.75/0.95 legacy
                    variants + Castle Siege / Duel / Illusion Temple (systems not built).
      [ Encryption ]: SimpleModulus, Xor3, Xor32 all implemented with key tables.
-     [ Transport ]: WS↔TCP proxy, connect-server handshake, server list + live probe.
-     [ Offline ]: Single-player /offline demo path works with no server.
+     [ Transport ]: WS↔TCP proxy, fixed connect-server handshake + live probe.
 
 [▓▓▓▓▓▓▓▓▓░] Worlds & Maps (9/10):
      [ Coverage ]: 42 map layers registered - every S6 world incl. all 4 Doppelganger,
@@ -194,15 +194,8 @@ single-player offline demo.
                   Duel + spectators (9 unhandled), Guild Soccer, Crywolf event logic,
                   Kanturu event logic. Those maps load; the events don't run.
 
-[▓▓▓▓▓▓░░░░] Multi-version Support (6/10):
-     [ Contract ]: Version seam exists - GameVersion contract, protocol/data/encryption/
-                   features split, _template folder ready.
-     [ Shipped ]: season6 and 0.97d, selected at runtime: versions/registry.ts picks the
-                  version per server-list entry (or ?version=), one build carries both.
-                  0.97d brings its own encryption, packet-variant ranking, feature flags
-                  and asset tree (Data-v097d + converted Lorencia).
-     [ Gap ]: Outbound packets are still the Season 6 layouts, the window chrome is
-              still Season 6 art, and 11 of the 12 0.97d worlds are unconverted.
+[▓▓▓▓▓▓░░░░] Game Version:
+     [ Supported ]: S6EP3 only. The client build does not offer 0.97d.
 ```
 
 

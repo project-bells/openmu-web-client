@@ -1,21 +1,9 @@
-import { makeAutoObservable, runInAction } from 'mobx';
-import { LocalStorage } from '../libs/localStorage';
-import { CS_HOST, CS_PORT, WS_HOST, WS_PORT } from '../consts';
+import { WS_HOST, WS_PORT } from '../consts';
 import { versionByTag } from '../version';
 
 /**
- * Where the client connects: one editable list of server profiles, the one
- * that is selected, and the rules that turn a profile into the two addresses
- * the sockets actually need.
- *
- * Three layers, highest first:
- *
- *   1. the URL (`?cs=host:port`, `?ws=wss://host:port`, `?server=<name>`) -
- *      an ephemeral profile, never saved, so a link can point a build at a
- *      server without touching what the player has stored;
- *   2. the saved profiles (localStorage) - what the in-client picker edits;
- *   3. the build defaults (`VITE_CS_HOST/PORT`, `VITE_WS_HOST/PORT` via
- *      consts.ts) - the seed of the first profile on a fresh install.
+ * This client is locked to MU Origins. The connect-server endpoint is fixed;
+ * only the proxy address can vary between deployments through the build env.
  *
  * Note what the ws address is *not*: a browser cannot open a TCP socket, so
  * every connection goes through the ws↔TCP proxy (`proxy/main.ts`), which
@@ -23,11 +11,6 @@ import { versionByTag } from '../version';
  * and `csHost:csPort` is the MU connect server as seen **from the proxy's
  * network** - they have no reason to be the same machine.
  */
-
-const SERVERS_KEY = 'mu_servers';
-
-/** The pre-profile config blob (store.ts `CONFIG_KEY`), read once to migrate. */
-const LEGACY_KEY = '_mu_key';
 
 export type GameServerPolicy =
   /** Use the address `ConnectionInfo` returns; fall back to `csHost`. */
@@ -58,7 +41,7 @@ export type PublishedGameServer = {
 };
 
 export type ServerProfile = {
-  /** Stable key; `URL_PROFILE_ID` for the ephemeral URL override. */
+  /** Stable key; `URL_PROFILE_ID` remains reserved for legacy account data. */
   id: string;
   /** What the picker shows. Free text, never parsed. */
   name: string;
@@ -96,7 +79,7 @@ export type ServerProfile = {
 
 export const URL_PROFILE_ID = 'url';
 
-/** MU's default connect-server port, used when `?cs=` omits one. */
+/** MU Origins' fixed connect-server port. */
 const DEFAULT_CS_PORT = 44405;
 
 const MAX_PORT = 65535;
@@ -268,387 +251,75 @@ export function matchesSearch(profile: ServerProfile, query: string): boolean {
   return words.every(word => haystack.includes(word));
 }
 
-function defaultProfile(): ServerProfile {
-  return {
-    id: 'local',
-    name: 'Local (OpenMU)',
-    csHost: CS_HOST,
-    csPort: CS_PORT,
-    wsUrl: normalizeWsUrl(`${WS_HOST}:${WS_PORT}`),
-    // The build defaults describe one machine running OpenMU and the proxy,
-    // where the returned address is that same box either way.
-    gsAddress: 'auto',
-  };
-}
-
-/**
- * Whether a fresh install gets that profile at all.
- *
- * It is seeded when the build names a connect server of its own, and when the
- * page is being served off the machine it describes - a developer's checkout,
- * where `127.0.0.1:44405` is a server that is really there.
- *
- * A client served from a host gets neither: its worlds come from the published
- * list, and seeding the loopback default there puts a row in front of every
- * player that none of them can play and only the owner understands.
- */
-function seedsDefaultProfile(): boolean {
-  if (!isLoopback(CS_HOST)) return true;
-  if (typeof location === 'undefined') return true;
-
-  return isLoopback(location.hostname) || location.protocol === 'file:';
-}
-
-/**
- * What `active` answers when there is nothing to be active - no saved profile,
- * no published world, no URL. It is never saved and never shown: the screens
- * ask `isEmpty` first. It exists so the sockets and the picker keep reading a
- * profile instead of a null.
- */
-const NO_WORLD = defaultProfile();
-
-/**
- * The endpoints the pre-profile client kept in its config blob. Carried over
- * so an existing install keeps connecting where it did, then left alone -
- * store.ts no longer writes those four keys.
- */
-function legacyProfile(): ServerProfile | null {
-  try {
-    const raw = LocalStorage.load(LEGACY_KEY);
-
-    if (!raw) return null;
-
-    const data = JSON.parse(raw) as {
-      csIp?: string;
-      csPort?: number;
-      wsHost?: string;
-      wsPort?: number;
-    };
-
-    if (!data.csIp && !data.wsHost) return null;
-
-    const base = defaultProfile();
-
-    return sanitizeProfile(
-      {
-        csHost: data.csIp,
-        csPort: data.csPort,
-        wsUrl:
-          data.wsHost && `${data.wsHost}:${data.wsPort ?? WS_PORT}`,
-        // What the old client did unconditionally (logic.ts reconnected to
-        // `config.csIp`), kept for the profile it is migrating.
-        gsAddress: 'csHost',
-      },
-      base
-    );
-  } catch {
-    return null;
-  }
-}
-
-type StoredState = {
-  profiles: ServerProfile[];
-  activeId: string;
-  /** The last world actually entered, which is not the last one clicked on. */
-  lastPlayedId?: string;
-};
-
-function load(): StoredState {
-  const fallback = (): StoredState => {
-    const profile =
-      legacyProfile() ?? (seedsDefaultProfile() ? defaultProfile() : null);
-
-    return profile
-      ? { profiles: [profile], activeId: profile.id }
-      : { profiles: [], activeId: '' };
-  };
-
-  const stored = LocalStorage.load(SERVERS_KEY);
-
-  if (!stored) return fallback();
-
-  try {
-    const data = JSON.parse(stored) as Partial<StoredState>;
-    const base = defaultProfile();
-    const profiles = (data.profiles ?? [])
-      .filter((p): p is ServerProfile => !!p && typeof p === 'object')
-      .map(p => sanitizeProfile(p, { ...base, id: p.id || base.id }));
-
-    // Saving nothing is a state of its own on a client whose worlds come from
-    // the published list, so an empty array is kept rather than re-seeded - and
-    // the selection is kept as written, because it may name a listed world that
-    // this launch has not fetched yet. `active` falls back until it arrives.
-    const activeId =
-      typeof data.activeId === 'string'
-        ? data.activeId
-        : (profiles[0]?.id ?? '');
-
-    // Kept as written even when nothing here matches it: the world last played
-    // may be a listed one, and the list has not been fetched yet.
-    const lastPlayedId =
-      typeof data.lastPlayedId === 'string' ? data.lastPlayedId : undefined;
-
-    return { profiles, activeId, lastPlayedId };
-  } catch {
-    return fallback();
-  }
-}
-
-/**
- * The URL override, parsed once. `?cs=` / `?ws=` / `?version=` build a profile
- * of their own; `?server=` only selects a saved one, by id or
- * (case-insensitive) name.
- */
-function urlOverride(saved: StoredState): {
-  profile: ServerProfile | null;
-  selectId: string | null;
-} {
-  if (typeof location === 'undefined') return { profile: null, selectId: null };
-
-  const params = new URLSearchParams(location.search);
-  const cs = params.get('cs');
-  const ws = params.get('ws');
-  // The client version tag (`versions/registry.ts` listTag). A world the
-  // published list has not tagged yet, or a version being tried out, can be
-  // entered with it; an unknown tag falls back to the default version.
-  const version = params.get('version');
-  const wanted = params.get('server')?.trim().toLowerCase();
-
-  const selectId =
-    saved.profiles.find(
-      p => p.id === wanted || p.name.toLowerCase() === wanted
-    )?.id ?? null;
-
-  if (!cs && !ws && !version) return { profile: null, selectId };
-
-  const base = saved.profiles.find(p => p.id === selectId) ?? saved.profiles[0];
-  const [csHost, csPort] = (cs ?? '').split(':');
-
-  return {
-    profile: sanitizeProfile(
-      {
-        id: URL_PROFILE_ID,
-        name: 'From URL',
-        csHost: cs ? csHost : undefined,
-        csPort: cs ? clampPort(csPort, DEFAULT_CS_PORT) : undefined,
-        wsUrl: ws ?? undefined,
-        version: version ?? undefined,
-        gsAddress: params.get('gs') === 'cs' ? 'csHost' : base.gsAddress,
-      },
-      base
-    ),
-    selectId,
-  };
-}
+const LOCKED_SERVER: ServerProfile = Object.freeze({
+  id: 'list:play.muorigins.online:44405',
+  name: 'MU Origins',
+  csHost: 'play.muorigins.online',
+  csPort: DEFAULT_CS_PORT,
+  wsUrl: normalizeWsUrl(`${WS_HOST}:${WS_PORT}`),
+  gsAddress: 'auto',
+  description: 'Season 6 Episode 3',
+  version: 'S6EP3',
+});
 
 class ServerConfigStore {
-  profiles: ServerProfile[];
-
-  /**
-   * Servers from the published list (`serverList.ts`), refreshed at launch.
-   * Kept apart from `profiles` because they are someone else's rows: they are
-   * never saved, never edited, and disappear again when the list drops them.
-   */
-  listed: ServerProfile[] = [];
-
-  activeId: string;
-
-  /** The last world entered, not the last one clicked. Empty on a fresh install. */
-  lastPlayedId: string;
-
-  /** Set by `?cs=`/`?ws=`: wins over the selection, is never saved. */
-  readonly urlProfile: ServerProfile | null;
-
-  constructor() {
-    const saved = load();
-    const { profile, selectId } = urlOverride(saved);
-
-    this.profiles = saved.profiles;
-    this.activeId = selectId ?? saved.activeId;
-    this.lastPlayedId = saved.lastPlayedId ?? '';
-    this.urlProfile = profile;
-
-    makeAutoObservable(this);
+  get profiles(): ServerProfile[] {
+    return [LOCKED_SERVER];
   }
 
-  /**
-   * Everything the picker offers: what the player saved, then the list - with
-   * the world they last played pulled to the front, wherever it came from. The
-   * one you keep going back to should not be on page three.
-   */
+  get listed(): ServerProfile[] {
+    return [];
+  }
+
+  get activeId(): string {
+    return LOCKED_SERVER.id;
+  }
+
+  get lastPlayedId(): string {
+    return '';
+  }
+
+  get urlProfile(): null {
+    return null;
+  }
+
   get all(): ServerProfile[] {
-    const rows = [...this.profiles, ...this.listed];
-    const at = rows.findIndex(p => p.id === this.lastPlayedId);
-
-    return at > 0 ? [rows[at], ...rows.slice(0, at), ...rows.slice(at + 1)] : rows;
+    return [LOCKED_SERVER];
   }
 
-  /** The languages the offered worlds are tagged with, for the picker's filter. */
   get languages(): string[] {
-    const tags = new Set<string>();
-
-    for (const world of this.all) {
-      if (world.language) tags.add(world.language.toLowerCase());
-    }
-
-    return [...tags].sort();
+    return [];
   }
 
-  /** The profile every connection is made from. */
   get active(): ServerProfile {
-    return (
-      this.urlProfile ??
-      this.all.find(p => p.id === this.activeId) ??
-      this.all[0] ??
-      NO_WORLD
-    );
+    return LOCKED_SERVER;
   }
 
-  /**
-   * There is nowhere to play: nothing saved, nothing published, no URL. A
-   * hosted client is in this state until its list arrives, and stays there if
-   * the list cannot be read - so the screens say so rather than offering the
-   * placeholder `active` hands them.
-   */
   get isEmpty(): boolean {
-    return !this.urlProfile && this.all.length === 0;
+    return false;
   }
 
-  /** True while the URL pins the endpoints, so the picker shows them read-only. */
   get lockedByUrl(): boolean {
-    return this.urlProfile != null;
+    return false;
   }
 
-  /** A listed server is shown as it was published; `add()` makes it editable. */
   get activeIsListed(): boolean {
     return !!this.active.listed;
   }
 
-  /**
-   * True when the fields belong to something the player may not edit - a URL
-   * override, a published row, or, with nothing to play at all, the placeholder
-   * standing in for one. Typing into that last one would write nowhere; Add is
-   * the way out of it, and makes a profile that does save.
-   */
   get readOnly(): boolean {
-    return this.lockedByUrl || this.activeIsListed || this.isEmpty;
+    return true;
   }
 
-  /**
-   * The published list arrived. The selection is left alone: an id that is not
-   * in the list yet (a saved one, or a listed one this fetch dropped) already
-   * falls back to the first saved profile in `active`.
-   */
-  setListed(entries: ServerProfile[]): void {
-    runInAction(() => {
-      this.listed = entries;
-    });
+  setListed(_entries: ServerProfile[]): void {}
+  markPlayed(_id: string): void {}
+  select(_id: string): void {}
+  update(_id: string, _patch: Partial<ServerProfile>): void {}
+  add(_from?: Partial<ServerProfile>): ServerProfile {
+    return LOCKED_SERVER;
   }
-
-  private save(): void {
-    LocalStorage.save(
-      SERVERS_KEY,
-      JSON.stringify({
-        profiles: this.profiles,
-        activeId: this.activeId,
-        lastPlayedId: this.lastPlayedId,
-      })
-    );
-  }
-
-  /**
-   * That world was entered, not merely looked at. The URL profile is skipped:
-   * it is a link somebody followed once, and it is gone next launch anyway.
-   */
-  markPlayed(id: string): void {
-    if (id === URL_PROFILE_ID) return;
-
-    runInAction(() => {
-      this.lastPlayedId = id;
-    });
-    this.save();
-  }
-
-  select(id: string): void {
-    if (!this.all.some(p => p.id === id)) return;
-
-    runInAction(() => {
-      this.activeId = id;
-    });
-    this.save();
-  }
-
-  update(id: string, patch: Partial<ServerProfile>): void {
-    const index = this.profiles.findIndex(p => p.id === id);
-
-    if (index < 0) return;
-
-    runInAction(() => {
-      this.profiles[index] = draftProfile(patch, this.profiles[index]);
-    });
-    this.save();
-  }
-
-  /**
-   * A new saved server, copied from whatever is selected. That is how a listed
-   * server becomes editable: pick it, add it, and the copy is yours - with the
-   * list's own marks (`listed`, its blurb and language) stripped off.
-   */
-  add(from?: Partial<ServerProfile>): ServerProfile {
-    const base = this.active ?? defaultProfile();
-    const profile = sanitizeProfile(
-      {
-        ...from,
-        id: `s${Date.now().toString(36)}`,
-        listed: false,
-        // The domain goes with the row it came from: this copy is an address
-        // the player owns and may point anywhere, and a world's services must
-        // not follow it there.
-        domain: '',
-        description: '',
-        language: '',
-        image: '',
-        // Same reason: the names a world published belong to that world's own
-        // game servers, not to wherever this copy ends up pointing.
-        servers: [],
-        // The copy is the player's own address, so it is whatever this build
-        // is - not whatever the line it came from asked for.
-        version: '',
-      },
-      { ...base, name: base.listed ? base.name : 'New server' }
-    );
-
-    runInAction(() => {
-      this.profiles.push(profile);
-      this.activeId = profile.id;
-    });
-    this.save();
-
-    return profile;
-  }
-
-  /** Removing the last profile is a no-op: there is always one to connect with. */
-  remove(id: string): void {
-    if (this.profiles.length < 2) return;
-
-    runInAction(() => {
-      this.profiles = this.profiles.filter(p => p.id !== id);
-      if (!this.profiles.some(p => p.id === this.activeId)) {
-        this.activeId = this.profiles[0].id;
-      }
-    });
-    this.save();
-  }
-
-  reset(): void {
-    const profile = defaultProfile();
-
-    runInAction(() => {
-      this.profiles = [profile];
-      this.activeId = profile.id;
-    });
-    this.save();
-  }
+  remove(_id: string): void {}
+  reset(): void {}
 }
 
 export const ServerConfig = new ServerConfigStore();
@@ -659,17 +330,15 @@ export const ServerConfig = new ServerConfigStore();
  * picker's preview line read this, so what the player is shown is exactly what
  * will be dialled.
  */
-export function effective(profile: ServerProfile = ServerConfig.active): {
+export function effective(_profile: ServerProfile = ServerConfig.active): {
   csHost: string;
   csPort: number;
   wsUrl: string;
 } {
-  const fallback = defaultProfile();
-
   return {
-    csHost: normalizeHost(profile.csHost) || fallback.csHost,
-    csPort: clampPort(profile.csPort, fallback.csPort),
-    wsUrl: normalizeWsUrl(profile.wsUrl) || fallback.wsUrl,
+    csHost: LOCKED_SERVER.csHost,
+    csPort: LOCKED_SERVER.csPort,
+    wsUrl: LOCKED_SERVER.wsUrl,
   };
 }
 
@@ -701,9 +370,14 @@ export function connectServerAddress(): { host: string; port: number } {
 export function displayAddress(
   profile: ServerProfile = ServerConfig.active
 ): string {
-  const { csHost, csPort, wsUrl } = effective(profile);
+  if (!profile.listed) {
+    const csHost = normalizeHost(profile.csHost) || LOCKED_SERVER.csHost;
+    const csPort = clampPort(profile.csPort, LOCKED_SERVER.csPort);
 
-  if (!profile.listed) return `${csHost}:${csPort}`;
+    return `${csHost}:${csPort}`;
+  }
+
+  const { csHost, csPort, wsUrl } = effective(profile);
 
   return profile.domain || normalizeHost(wsUrl) || `${csHost}:${csPort}`;
 }

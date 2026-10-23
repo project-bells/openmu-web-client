@@ -33,7 +33,8 @@ import {
   resolveModelFactory,
 } from './common/modelFactoryPerId';
 import { monsterDisplayName, monsterMaxHealth } from './common/monstersDatabase';
-import { translateServerText } from './i18n/serverText';
+import { matchServerText, translateServerText } from './i18n/serverText';
+import { ServerConfig } from './common/serverConfig';
 import { loadNpcNames, onNpcNamesChanged } from './libs/mu/npcNameFile';
 import {
   MonsterActionType,
@@ -463,15 +464,43 @@ EventBus.on('GameServerEntered', bytes => {
 
   runInAction(() => {
     Store.uiState = UIState.Login;
+    Store.autoConnecting = false;
   });
 });
 
 EventBus.on('ServerListResponse', bytes => {
   const p = new ServerListResponsePacket(bytes);
   const servers = p.getServers(p.ServerCount);
+  const firstServer = servers.reduce<(typeof servers)[number] | undefined>(
+    (first, server) =>
+      !first || server.ServerId < first.ServerId ? server : first,
+    undefined
+  );
   runInAction(() => {
     Store.serverList = servers;
+    if (firstServer) {
+      const groupId = firstServer.ServerId >> 8;
+      const groupServers = servers
+        .filter(server => server.ServerId >> 8 === groupId)
+        .sort((a, b) => a.ServerId - b.ServerId);
+      const channelIndex = groupServers.findIndex(
+        server => server.ServerId === firstServer.ServerId
+      );
+      const publishedGroup = ServerConfig.active.servers?.find(
+        group => group.id === groupId
+      );
+      Store.selectedServer = {
+        name:
+          publishedGroup?.name ||
+          t('servers.serverName', { number: groupId + 1 }),
+        channel: channelIndex + 1,
+        channelName: publishedGroup?.channels.find(
+          channel => channel.id === (firstServer.ServerId & 0xff)
+        )?.name,
+      };
+    }
   });
+  if (firstServer) Store.getConnectionInfoRequest(firstServer.ServerId);
 });
 
 // A socket we did not close ourselves went away: `Store.onSocketLost` ignores
@@ -654,6 +683,10 @@ function applyCharacterInformation(p: CharacterInformationView) {
   GmPanel.reset();
 
   runInAction(() => {
+    // CharacterInventory can contain only occupied slots. Clear the previous
+    // character first so empty equipment slots do not keep the old appearance.
+    playerData.items.fill(null);
+
     playerData.money = p.Money;
     playerData.x = p.X;
     playerData.y = p.Y;
@@ -706,6 +739,7 @@ function applyCharacterInformation(p: CharacterInformationView) {
     // Lazy: preloadSprites pulls the window layouts in, and logic.ts sits under them.
     void import('./libs/mu/preloadSprites').then(m => m.preloadWorldSprites());
 
+    Store.syncPlayerAppearance();
     EventBus.emit('requestWarp', { map: p.MapId, pos: { x: p.X, y: p.Y } });
   });
 }
@@ -3590,6 +3624,7 @@ EventBus.on('ServerMessage', packet => {
   // plus OpenMU's nine-zero prefix (`ShowMessagePlugIn.cs`: "000000000" +
   // message for every Season > 0 client), which the original client skips.
   const text = cleanName(p.Message).replace(/^0{9}/, '');
+  if (matchServerText(text)?.key === 'serverMessage.playerEnteredGame') return;
 
   // `ReceiveNotice` (WSclient.cpp:1605): 0 = golden notice banner, 1 = the
   // system log line, 2 = guild notice (banner in green + the guild window).

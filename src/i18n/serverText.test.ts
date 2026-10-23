@@ -41,6 +41,12 @@ describe('server text', () => {
     expect(match?.params).toEqual({ '0': '42' });
   });
 
+  it('recognises the player-entered-game announcement', () => {
+    expect(matchServerText('Elfita entered the game.')?.key).toBe(
+      'serverMessage.playerEnteredGame'
+    );
+  });
+
   it('leaves free text alone', () => {
     const notice = 'Server restart in 10 minutes, see you soon!';
 

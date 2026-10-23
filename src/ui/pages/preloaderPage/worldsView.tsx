@@ -8,10 +8,9 @@ import {
   type ServerProfile,
 } from '../../../common/serverConfig';
 import { ServerAccounts } from '../../../common/serverAccounts';
-import { refreshServerList, ServerList } from '../../../common/serverList';
 import { ServerProbe } from '../../../common/serverProbe';
 import { versionTags } from '../../../version';
-import { Button, Icon } from './controls';
+import { Icon } from './controls';
 import { Banner, REACH_TEXT } from './banner';
 import { WorldDetails } from './worldDetails';
 
@@ -72,7 +71,6 @@ const WorldCard = observer(
 export const WorldsView = observer(
   ({
     worlds,
-    total,
     search,
     onSearch,
     language,
@@ -81,8 +79,6 @@ export const WorldsView = observer(
   }: {
     /** Everything that survived both filters. */
     worlds: ServerProfile[];
-    /** Worlds before either filter, so the count can say "3 of 12". */
-    total: number;
     search: string;
     onSearch: (text: string) => void;
     language: string;
@@ -171,18 +167,9 @@ export const WorldsView = observer(
       return () => window.removeEventListener('keydown', onKey);
     }, [worlds, selected.id]);
 
-    const refresh = () => {
-      ServerProbe.forget();
-      void refreshServerList();
-    };
-
     const empty = search
       ? t('worlds.noMatch', { text: search.trim() })
-      : ServerList.state === 'loading'
-        ? t('servers.loading')
-        : ServerList.state === 'error'
-          ? t('server.listOffline')
-          : t('worlds.empty');
+      : t('worlds.empty');
 
     return (
       <div className="ws-worlds scrollable">
@@ -225,22 +212,6 @@ export const WorldsView = observer(
               </div>
             )}
 
-            <span className="ws-toolbar-end">
-              {worlds.length < total && (
-                <span className="ws-count">
-                  {t('worlds.count', { shown: worlds.length, total })}
-                </span>
-              )}
-              <Button
-                icon="refresh"
-                variant="ghost"
-                small
-                className={ServerList.state === 'loading' ? 'is-busy' : undefined}
-                onClick={refresh}
-              >
-                {t('worlds.refresh')}
-              </Button>
-            </span>
           </div>
 
           <div className="ws-grid-scroll scrollable" ref={scroller}>
